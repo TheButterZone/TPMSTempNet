@@ -451,20 +451,33 @@ class UniversalTPMSPacket(Packet):
         if 'time' in obj:
             pkt['dateTime'] = Packet.parse_time(obj.get('time'))
         pkt['usUnits'] = weewx.METRICWX
-        sensor_id = obj.get('id', 'unknown')
-        pkt['temperature'] = Packet.get_float(obj, 'temperature_C')
         
-        # If the packet is missing a temperature reading, discard it
-        if pkt['temperature'] is None:
+        temp_c = Packet.get_float(obj, 'temperature_C')
+        
+        # Sanity Filter: Discard missing readings or values outside plausible physical bounds (-30°C to 80°C)
+        if temp_c is None or not (-30.0 <= temp_c <= 80.0):
             return None
             
-        pkt = Packet.add_identifiers(pkt, sensor_id, cls.__name__)
+        pkt['temperature'] = temp_c
+
+        # Extract metadata for ephemeral terminal inspection (not saved to logs/disk/cloud)
+        sensor_id = str(obj.get('id', 'unknown'))
+        model_name = str(obj.get('model', 'Unknown TPMS'))
+        
+        # Force-flushed print: renders live in the foreground terminal window only.
+        # Bypasses the WeeWX logging system entirely, leaving zero persistent traces on disk.
+        print(f"[TPMS INTERCEPT] Model: {model_name} | ID: {sensor_id} | Temp: {temp_c}°C", flush=True)
+        
+        # Pass the hardware ID so MinTempService can isolate physical sensors
+        pkt['tpms_id'] = sensor_id
+        
+        # Hardcode the aliased identifier 'sane' and class name 'UniversalTPMSPacket'
+        # to match `extraTemp1 = temperature.sane.UniversalTPMSPacket` in weewx.conf
+        pkt = Packet.add_identifiers(pkt, 'sane', 'UniversalTPMSPacket')
         return pkt
 
-
 # List every TPMS model base identifier string rtl_433 outputs
-supported_tpms_models = 
-[
+supported_tpms_models = [
     "Steelmate", "Schrader", "Citroen", "Toyota", "Ford", "Renault", 
     "PMV-107J", "Jansite", "Elantra2012", "Abarth", "Hyundai", 
     "SolarTPMS", "Porsche", "AVE", "TyreGuard", "Kia", "EezTire", 

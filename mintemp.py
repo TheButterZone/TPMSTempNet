@@ -23,16 +23,20 @@ class MinTempService(StdService):
 
     def handle_new_loop(self, event):
         packet = event.packet
-        print(f"DEBUG: MinTempService intercepted packet! Current memory: {self.sensors}")
+        # print(f"DEBUG: MinTempService intercepted packet! Current memory: {self.sensors}")
         now = packet.get('dateTime', time.time())
+        tpms_id = packet.get('tpms_id')
         
         # 1. Ingest data and calculate Rate of Change
-        for key, value in packet.items():
+        for key, value in list(packet.items()):
             if key.startswith('extraTemp') and value is not None:
                 current_val = float(value)
+
+                # Key by the underlying physical hardware ID if available
+                sensor_key = tpms_id if tpms_id else key
                 
-                if key in self.sensors:
-                    state = self.sensors[key]
+                if sensor_key in self.sensors:
+                    state = self.sensors[sensor_key]
                     dt_minutes = (now - state['ts']) / 60.0
                     
                     # Calculate rate of change if enough time has passed (>1 min) to avoid micro-jitter
@@ -47,14 +51,14 @@ class MinTempService(StdService):
                     state['ts'] = now
                 else:
                     # First time seeing this sensor
-                    self.sensors[key] = {'val': current_val, 'ts': now, 'quarantined_until': 0}
+                    self.sensors[sensor_key] = {'val': current_val, 'ts': now, 'quarantined_until': 0}
 
         # 2. Filter the pool of sensors
         valid_readings = []
-        for key, state in list(self.sensors.items()):
+        for sensor_key, state in list(self.sensors.items()):
             # Purge stale data
             if (now - state['ts']) > self.max_age:
-                del self.sensors[key]
+                del self.sensors[sensor_key]
                 continue
                 
             # Skip if currently in timeout
@@ -67,7 +71,7 @@ class MinTempService(StdService):
                 
             valid_readings.append(state['val'])
 
-        # 3. Publish the lowest stable reading, or fallback to the last known good state
+        # 3. Publish lowest ambient candidate
         if valid_readings:
             ambient = min(valid_readings)
             packet['outTemp'] = ambient
