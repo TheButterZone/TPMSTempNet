@@ -24,7 +24,6 @@ class TPMSTempService(StdService):
         
         # State tracking: { 'sensor_id': {'val': 72.5, 'ts': 1690000000, 'first_seen': 168999000, 'quarantined_until': 0} }
         self.sensors = {}
-        self.last_good_ambient = None
 
     def handle_new_loop(self, event):
         packet = event.packet
@@ -99,7 +98,6 @@ class TPMSTempService(StdService):
         if ambient is not None:
             log.debug(f"TPMSTempService: Computed ambient temperature baseline -> {ambient}°C")
             packet['outTemp'] = ambient
-            self.last_good_ambient = ambient
-        elif self.last_good_ambient is not None:
-            # All sensors are either stale, dwelling, or quarantined; ride out the gap
-            packet['outTemp'] = self.last_good_ambient
+        elif 'outTemp' in packet:
+            # Explicitly clear the raw reading so quarantined/stale temps don't leak through
+            packet['outTemp'] = None
