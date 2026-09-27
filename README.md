@@ -1,22 +1,21 @@
 # TPMSTempNet
 
-TPMSTempNet leverages parked vehicle TPMS (Tire Pressure Monitoring System) sensors via RTL-SDR to infer local ambient temperature. It routes decoded TPMS data through a custom WeeWX driver, sanitizes and filters the data to isolate stable cold-ambient readings, and broadcasts Urban Heat Island telemetry directly to Nostr relays (`relaying.earth` compliant).
+TPMSTempNet leverages parked vehicle TPMS (Tire Pressure Monitoring System) sensors via RTL-SDR to infer local ambient temperature. It routes decoded TPMS data through a custom WeeWX driver, sanitizes and filters the data to isolate stable cold-ambient readings, and can optionally broadcast this Urban Heat Island telemetry directly to Nostr relays (`relaying.earth` compliant) or seamlessly pass the metrics to standard weather networks like Weather Underground and CWOP.
 
 ### Prerequisites
 
 * [rtl_433](https://github.com/merbanan/rtl_433) installed and accessible in your system path.
 * [WeeWX](https://github.com/weewx/weewx) (v4 or v5) installed and running.
-* **Python Cryptography & WebSocket Libraries:** Required for Nostr event signing and relay communication (`nostr`, `websocket-client`).
-
+* **Python Cryptography & WebSocket Libraries (Optional):** Required only for Nostr event signing and relay communication (`nostr`, `websocket-client`). If you only want to use TPMSTempNet to sanitize temperature data for traditional networks like Weather Underground or CWOP, you can skip these dependencies entirely.
 
 ---
 
 ## Installation & Configuration
 
 
-### 1. Install Python Dependencies
+### 1. Install Python Dependencies (Optional)
 
-If your WeeWX environment runs inside a virtual environment (such as WeeWX v5), install the required Nostr publishing dependencies using `pip`:
+If you intend to broadcast your data to Nostr, install the required publishing dependencies using `pip`. If you are only using WeeWX's built-in weather networks (like WU or CWOP), you can skip this step.
 
 ```bash
 # Example for a WeeWX virtual environment or pip installation:
@@ -30,7 +29,7 @@ Save the provided Python scripts into your WeeWX `user` directory:
 * For WeeWX v5 (pip install): `~/weewx-data/bin/user/`
 * For WeeWX v4 (legacy install): `/usr/share/weewx/user/` or `/home/weewx/bin/user/`
 
-Place `sdr.py`, `tpmstemp.py`, and `nostr_publisher.py` inside this directory. Additionally, keep the `tools/` directory alongside your setup for diagnostic utilities.
+Place `sdr.py`, `tpmstemp.py`, and `nostr_publisher.py` inside this directory. Additionally, keep the `tools/` directory alongside your setup for standalone Nostr tools.
 
 ### 3. Configure `weewx.conf`
 
@@ -69,7 +68,10 @@ Add a standalone block to filter physical temperature limits. Values must be in 
 
 ```
 
-**C. Add the Nostr Publisher & Map Registration**
+**C. Add the Nostr Publisher & Map Registration (Optional)**
+
+*(Skip this step if you do not wish to broadcast to Nostr. The Python script will safely ignore the missing dependencies.)*
+
 Under `[StdRESTful]`, add the `[[Nostr]]` block. On its first startup, if `private_key` is left blank, the publisher will automatically generate a secure Nostr keypair and print to the terminal.
 
 ```ini
@@ -95,7 +97,7 @@ Under `[StdRESTful]`, add the `[[Nostr]]` block. On its first startup, if `priva
 In the `[Engine]` -> `[[Services]]` section:
 
 1. Append `user.tpmstemp.TPMSTempService` to your `data_services` line.
-2. Append `user.nostr_publisher.Nostr` to your `process_services` line.
+2. Append `user.nostr_publisher.Nostr` to your `process_services` line (omit this if you are not using Nostr).
 
 
 ```ini
@@ -106,7 +108,7 @@ process_services = ..., user.nostr_publisher.Nostr
 
 ### 4. Restart WeeWX
 
-Restart the WeeWX daemon to apply changes and broadcast your station profile (Kind 16158) to map frontends like `relaying.earth`:
+Restart the WeeWX daemon to apply changes. If Nostr is enabled, this will also broadcast your station profile (Kind 16158) to map frontends like `relaying.earth`:
 
 ```bash
 sudo systemctl restart weewx
@@ -130,9 +132,22 @@ To watch local tire traffic in real-time, simply run `weewxd` directly in your f
 
 ---
 
-## Relay Diagnostics & Tooling
+## Nostr Relay Diagnostics & Tooling
 
-TPMSTempNet includes a lightweight diagnostic tool inside the `tools/` directory to query and inspect your live profile or telemetry events directly from the command line across any supported relay.
+TPMSTempNet includes lightweight diagnostic tools inside the `tools/` directory to manage and inspect your live profile or telemetry events directly from the command line across any supported relay.
+
+### Manual Station Registration with `register_station.py`
+
+While the plugin automatically registers your station on startup, you can use this tool to manually force an immediate profile update to the Nostr network. This is useful if you just updated your station's name or location in `weewx.conf` and want to push the changes to the map without having to restart the entire WeeWX daemon.
+
+To manually broadcast your station profile, run the script and point it directly to your WeeWX configuration file:
+
+```bash
+python3 tools/register_station.py /path/to/weewx.conf
+
+```
+
+The script will securely parse your coordinates and private key, generate a compliant Kind 16158 profile event, and output the live acceptance status from each relay.
 
 ### Inspecting Events with `fetch_event.py`
 

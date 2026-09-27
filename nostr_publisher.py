@@ -4,9 +4,13 @@ import logging
 import time
 import weewx
 from weewx.engine import StdService
-from websocket import create_connection
-from nostr.event import Event
-from nostr.key import PrivateKey
+try:
+    from websocket import create_connection
+    from nostr.event import Event
+    from nostr.key import PrivateKey
+    NOSTR_AVAILABLE = True
+except ImportError:
+    NOSTR_AVAILABLE = False
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +54,10 @@ class Nostr(StdService):
 
     def __init__(self, engine, config_dict):
         super().__init__(engine, config_dict)
+
+        if not NOSTR_AVAILABLE:
+            log.info("Nostr: Publisher disabled (missing python-nostr or websocket-client libraries).")
+            return
 
         site_dict = config_dict.get('StdRESTful', {}).get('Nostr', {})
         if not str(site_dict.get('enable', 'false')).lower() in ('true', '1', 'yes'):
