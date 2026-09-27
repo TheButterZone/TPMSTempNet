@@ -468,11 +468,11 @@ class UniversalTPMSPacket(Packet):
         # Bypasses the WeeWX logging system entirely, leaving zero persistent traces on disk.
         print(f"[TPMS INTERCEPT] Model: {model_name} | ID: {sensor_id} | Temp: {temp_c}°C", flush=True)
         
-        # Pass the hardware ID so MinTempService can isolate physical sensors
+        # Pass the hardware ID so TPMSTempService can isolate physical sensors
         pkt['tpms_id'] = sensor_id
         
         # Hardcode the aliased identifier 'sane' and class name 'UniversalTPMSPacket'
-        # to match `extraTemp1 = temperature.sane.UniversalTPMSPacket` in weewx.conf
+        # to match `outTemp = temperature.sane.UniversalTPMSPacket` in weewx.conf
         pkt = Packet.add_identifiers(pkt, 'sane', 'UniversalTPMSPacket')
         return pkt
 

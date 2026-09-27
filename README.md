@@ -1,26 +1,38 @@
 # TPMSTempNet
 
-TPMSTempNet leverages parked vehicle TPMS (Tire Pressure Monitoring System) sensors via RTL-SDR to infer local ambient temperature. It routes decoded TPMS data through a custom WeeWX driver and uses a filtering service to reject elevated readings from hot or moving tires, leaving only stable, cold-ambient measurements.
+TPMSTempNet leverages parked vehicle TPMS (Tire Pressure Monitoring System) sensors via RTL-SDR to infer local ambient temperature. It routes decoded TPMS data through a custom WeeWX driver, sanitizes and filters the data to isolate stable cold-ambient readings, and broadcasts Urban Heat Island telemetry directly to Nostr relays (`relaying.earth` compliant).
 
 ### Prerequisites
 
 * [rtl_433](https://github.com/merbanan/rtl_433) installed and accessible in your system path.
 * [WeeWX](https://github.com/weewx/weewx) (v4 or v5) installed and running.
+* **Python Cryptography & WebSocket Libraries:** Required for Nostr event signing and relay communication (`nostr`, `websocket-client`).
+
 
 ---
 
 ## Installation & Configuration
 
-### 1. Install the Custom Scripts
+
+### 1. Install Python Dependencies
+
+If your WeeWX environment runs inside a virtual environment (such as WeeWX v5), install the required Nostr publishing dependencies using `pip`:
+
+```bash
+# Example for a WeeWX virtual environment or pip installation:
+pip install nostr websocket-client
+```
+
+### 2. Install the Custom Scripts
 
 Save the provided Python scripts into your WeeWX `user` directory:
 
 * For WeeWX v5 (pip install): `~/weewx-data/bin/user/`
 * For WeeWX v4 (legacy install): `/usr/share/weewx/user/` or `/home/weewx/bin/user/`
 
-Place `sdr.py` and `mintemp.py` inside this directory.
+Place `sdr.py`, `tpmstemp.py`, and `nostr_publisher.py` inside this directory. Additionally, keep the `tools/` directory alongside your setup for diagnostic utilities.
 
-### 2. Configure `weewx.conf`
+### 3. Configure `weewx.conf`
 
 Open your `weewx.conf` configuration file and make the following changes:
 
@@ -32,53 +44,78 @@ station_type = SDR
 
 ```
 
-Add the `[SDR]` block above the Simulator block. *Note: If you are located outside North America, you may need to adjust the frequency hopping (`-f`) flags to match TPMS bands in your region.*
+Add the `[SDR]` block. *Note: Adjust frequency flags (`-f`) for your region.*
 
 ```ini
 [SDR]
     driver = user.sdr
     cmd = /usr/local/bin/rtl_433 -M utc -F json -f 315M -f 433.92M -H 15 -s 1024k -g 42.1
     [[sensor_map]]
-        extraTemp1 = temperature.sane.UniversalTPMSPacket
+        outTemp = temperature.sane.UniversalTPMSPacket
 
 ```
 
-> **Privacy Note:** This driver strips and anonymizes TPMS hardware IDs to ensure privacy. No vehicle-identifying data is retained or transmitted to weather services; only sanitized temperature metrics are processed and stored.
+> **Privacy Note:** This driver strips and anonymizes TPMS hardware IDs. No vehicle-identifying data is retained or transmitted; only sanitized temperature metrics are processed.
+> 
+> 
 
-**B. Enable the MinTemp Filtering Service**
-Under the `[Engine]` -> `[[Services]]` section, locate the `data_services` list. Append the `MinTempService` to the end of the line:
-
-```ini
-data_services = ..., user.mintemp.MinTempService
-
-```
-
-**C. Set Local Climate Bounds**
-Add a new standalone block anywhere in `weewx.conf` to configure the physical temperature limits for your specific climate. The service will discard any readings outside this range. Values must be in Celsius.
+**B. Set Local Climate Bounds**
+Add a standalone block to filter physical temperature limits. Values must be in Celsius.
 
 ```ini
-[MinTempService]
+[TPMSTempService]
     min_temp = 0.0     # Adjust for your winter extremes
-    max_temp = 46.0    # Adjust for your summer extremes (Default is San Diego, CA)
+    max_temp = 46.0    # Adjust for your summer extremes
 
 ```
 
-### 3. Restart WeeWX
+**C. Add the Nostr Publisher & Map Registration**
+Under `[StdRESTful]`, add the `[[Nostr]]` block. On its first startup, if `private_key` is left blank, the publisher will automatically generate a secure Nostr keypair and print to the terminal.
 
-Once configured, restart the WeeWX daemon to apply the changes and begin capturing TPMS data:
+```ini
+    [[Nostr]]
+        # Enable the urban heat island broadcast
+        enable = true
+        
+        # Target observation
+        target_observation = outTemp
+        
+        # Geohash length (7 = ~150m x 150m resolution for street-level mapping)
+        geohash_precision = 7
+        
+        # Hexadecimal Private Key (auto-generated on first run if left blank)
+        private_key = ""
+        
+        # Target Relays (leave blank to use built-in default relay network)
+        relays = 
+
+```
+
+**D. Enable Services in the Engine**
+In the `[Engine]` -> `[[Services]]` section:
+
+1. Append `user.tpmstemp.TPMSTempService` to your `data_services` line.
+2. Append `user.nostr_publisher.Nostr` to your `process_services` line.
+
+
+```ini
+data_services = ..., user.tpmstemp.TPMSTempService
+process_services = ..., user.nostr_publisher.Nostr
+
+```
+
+### 4. Restart WeeWX
+
+Restart the WeeWX daemon to apply changes and broadcast your station profile (Kind 16158) to map frontends like `relaying.earth`:
 
 ```bash
 sudo systemctl restart weewx
 
 ```
 
-*(Or launch WeeWX directly from your terminal if running in standalone/debug mode).*
+---
 
-### Adding New Vehicles
-
-As of September 2026, all major TPMS models supported by `rtl_433` are mapped under the `UniversalTPMSPacket` class. If `rtl_433` adds support for new vehicle protocols in the future, you can easily bridge them by adding the new base identifier string to the `supported_tpms_models = []` array at the bottom of `sdr.py`.
-
-### Live Monitoring & Ephemeral Debugging
+## Live Monitoring & Ephemeral Debugging
 
 Because TPMSTempNet strictly anonymizes all vehicle data, specific TPMS models and hardware IDs are never written to your database or system logs.
 
@@ -91,14 +128,39 @@ To watch local tire traffic in real-time, simply run `weewxd` directly in your f
 
 > **Privacy Note:** This terminal output is volatile. It physically bypasses WeeWX's internal loggers and vanishes as soon as you close the session. Once WeeWX is deployed as a background daemon, this data becomes entirely invisible.
 
-**Raw SDR Tuning**
-If you need to verify sensor reception or tune your antenna outside of the WeeWX engine, you can also run the SDR directly in your terminal (adjusting the frequency hopping (`-f`) flags for your regional frequencies, if needed):
+---
+
+## Relay Diagnostics & Tooling
+
+TPMSTempNet includes a lightweight diagnostic tool inside the `tools/` directory to query and inspect your live profile or telemetry events directly from the command line across any supported relay.
+
+### Inspecting Events with `fetch_event.py`
+
+To verify that your station profile or telemetry events are successfully indexed on the network, pass the event hex ID to the diagnostic script:
 
 ```bash
-/usr/local/bin/rtl_433 -M utc -F json -f 315M -f 433.92M -H 15 -s 1024k -g 42.1 | grep --line-buffered -i "tpms"
+python3 tools/fetch_event.py <EVENT_ID_HEX>
 
 ```
 
-> **Note:** This terminal output is volatile and vanishes as soon as you close the session or kill the process, preserving absolute privacy.
+You can optionally target a specific relay using the `--relay` flag:
+
+```bash
+python3 tools/fetch_event.py <EVENT_ID_HEX> --relay wss://nos.lol
+
+```
 
 ---
+
+## Adding New Vehicles
+
+As of September 2026, all major TPMS models supported by `rtl_433` are mapped under the `UniversalTPMSPacket` class. If `rtl_433` adds support for new vehicle protocols in the future, you can easily bridge them by adding the new base identifier string to the `supported_tpms_models = []` array at the bottom of that class in `sdr.py`.
+
+---
+
+## Architecture Details
+
+* **Gateway vs. Sensor:** The RTL-SDR dongle functions strictly as a local RF receiving gateway over a `usb`/`ethernet` backhaul, while the telemetry data source is globally declared as **Multi-TPMS** to reflect the asphalt sensor array.
+* **Standards Compliance:**
+    * **Kind 16158:** Automatically manages map registration on startup using explicit tags (`name`, `description`, `geohash`, `connectivity`, `sensor`, `sensor_status`) with an empty content payload.
+    * **Kind 4223:** Transmits periodic temperature telemetry payloads utilizing standard `["temp", value, "Multi-TPMS"]` tags.
