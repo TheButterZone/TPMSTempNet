@@ -105,6 +105,7 @@ import subprocess
 import threading
 import time
 import copy
+import statistics
 
 try:
     import cjson as json
@@ -647,6 +648,17 @@ class SDRDriver(weewx.drivers.AbstractDevice):
         self._mgr = ProcManager()
         self._mgr.startup(cmd, path, ld_library_path)
 
+        # --- TPMS STATE MACHINE INIT ---
+        self.max_age = int(stn_dict.get('max_age', 3600))             # Purge after 1 hour
+        self.quarantine_sec = int(stn_dict.get('quarantine', 7200))   # 2-hour timeout for hot tires
+        self.max_rate = float(stn_dict.get('max_rate', 0.11))         # 0.11°C is approx 0.2°F per min
+        self.dwell_sec = int(stn_dict.get('dwell_sec', 600))          # NEW: 10 min wait for fresh tires
+
+        # Sane bounds for the local climate of San Diego, California
+        self.min_valid_temp = float(stn_dict.get('min_temp', 0.0))
+        self.max_valid_temp = float(stn_dict.get('max_temp', 46.0))
+        self.sensors = {}
+
     def closePort(self):
         self._mgr.shutdown()
 
@@ -659,23 +671,57 @@ class SDRDriver(weewx.drivers.AbstractDevice):
             for lines in self._mgr.get_stdout():
                 if self._log_lines:
                     loginf("lines: %s" % lines)
+
                 for packet in PacketFactory.create(lines):
-                    if packet:
-                        pkt = self.map_to_fields(packet, self._sensor_map)
-                        if pkt:
-                            if not self._packets_match(pkt, self._last_pkt):
-                                if self._log_packets:
-                                    logdbg("packet=%s" % pkt)
-                                self._last_pkt = pkt
-                                self._calculate_deltas(pkt)
-                                yield pkt
-                            else:
-                                if self._log_dups:
-                                    logdbg("ignoring duplicate packet %s" % pkt)
-                        elif self._log_unmapped:
+                    if not packet:
+                        if self._log_unknown:
+                            loginf("unparsed: %s" % lines)
+                        continue
+
+                    pkt = self.map_to_fields(packet, self._sensor_map)
+
+                    if not pkt:
+                        if self._log_unmapped:
                             loginf("unmapped: %s" % packet)
-                    elif self._log_unknown:
-                        loginf("unparsed: %s" % lines)
+                        continue
+
+                    # ---------------------------------------------------------
+                    # TPMS STATE MACHINE CHOKE POINT
+                    # ---------------------------------------------------------
+                    raw_tpms_id = packet.get('tpms_id.sane.UniversalTPMSPacket')
+
+                    if raw_tpms_id is not None and 'outTemp' in pkt:
+                        now = pkt.get('dateTime', time.time())
+
+                        ambient = self._compute_ambient_baseline(
+                            pkt['outTemp'],
+                            now,
+                            raw_tpms_id
+                        )
+
+                        if ambient is None:
+                            # No legitimate ambient observation yet.
+                            # Drop before duplicate checking or yielding.
+                            continue
+
+                        pkt['outTemp'] = ambient
+
+                    # ---------------------------------------------------------
+                    # DUPLICATE SUPPRESSION
+                    # ---------------------------------------------------------
+                    if self._packets_match(pkt, self._last_pkt):
+                        if self._log_dups:
+                            logdbg("ignoring duplicate packet %s" % pkt)
+                        continue
+
+                    if self._log_packets:
+                        logdbg("packet=%s" % pkt)
+
+                    self._last_pkt = pkt
+                    self._calculate_deltas(pkt)
+
+                    yield pkt
+
             # report any errors
             for line in self._mgr.get_stderr():
                 logerr(line)
@@ -683,6 +729,66 @@ class SDRDriver(weewx.drivers.AbstractDevice):
             for line in self._mgr.get_stderr():
                 logerr(line)
             raise weewx.WeeWxIOError("rtl_433 process is not running")
+
+    def _compute_ambient_baseline(self, current_val, now, tpms_id):
+        # 1. Ingest
+        if tpms_id in self.sensors:
+            state = self.sensors[tpms_id]
+            dt_minutes = (now - state['ts']) / 60.0
+            
+            if dt_minutes > 1.0:
+                rate = (current_val - state['val']) / dt_minutes
+                # Enforce absolute rate of change (catches sudden drops and spikes)
+                if abs(rate) > self.max_rate:
+                    state['quarantined_until'] = now + self.quarantine_sec
+                    
+            state['val'] = current_val
+            state['ts'] = now
+        else:
+            self.sensors[tpms_id] = {
+                'val': current_val, 
+                'ts': now, 
+                'first_seen': now, 
+                'quarantined_until': 0
+            }
+
+        # 2. Filter pool
+        valid_readings = []
+        for sensor_key, state in list(self.sensors.items()):
+            # Purge stale data
+            if (now - state['ts']) > self.max_age:
+                del self.sensors[sensor_key]
+                continue
+                
+            # Skip if currently in RoC timeout
+            if now < state['quarantined_until']:
+                continue
+
+            # Skip if it hasn't passed the initial Dwell time (anti-highway filter)
+            if (now - state['first_seen']) < self.dwell_sec:
+                continue
+                
+            # Skip if outside sane climate bounds
+            if not (self.min_valid_temp <= state['val'] <= self.max_valid_temp):
+                continue
+                
+            valid_readings.append(state['val'])
+
+        # 3. Publish Median
+        n = len(valid_readings)
+        ambient = None
+        
+        if n == 1:
+            ambient = valid_readings[0]
+        elif n == 2:
+            ambient = sum(valid_readings) / 2.0
+        elif n >= 3:
+            ambient = statistics.median(valid_readings)
+
+        if ambient is not None:
+            logdbg("SDRDriver TPMS Filter: Computed ambient baseline -> %.1f°C" % ambient)
+            
+        return ambient
 
     def _packets_match(self, pkt1, pkt2):
         # see if two packets match.  this is more than just a direct comparison

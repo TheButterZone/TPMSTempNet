@@ -29,7 +29,7 @@ Save the provided Python scripts into your WeeWX `user` directory:
 * For WeeWX v5 (pip install): `~/weewx-data/bin/user/`
 * For WeeWX v4 (legacy install): `/usr/share/weewx/user/` or `/home/weewx/bin/user/`
 
-Place `sdr.py`, `tpmstemp.py`, and `nostr_publisher.py` inside this directory. Additionally, keep the `tools/` directory alongside your setup for standalone Nostr tools.
+Place `sdr.py` and `nostr_publisher.py` inside this directory. Additionally, keep the `tools/` directory alongside your setup for standalone Nostr tools.
 
 ### 3. Configure `weewx.conf`
 
@@ -49,6 +49,17 @@ Add the `[SDR]` block. *Note: Adjust frequency flags (`-f`) for your region.*
 [SDR]
     driver = user.sdr
         cmd = /usr/local/bin/rtl_433 -M utc -F json -f 315M -f 433.92M -H 15 -s 1024k -g 42.1 -R 0 -R 59 -R 60 -R 82 -R 88 -R 89 -R 90 -R 95 -R 110 -R 123 -R 140 -R 156 -R 168 -R 180 -R 186 -R 201 -R 203 -R 208 -R 212 -R 225 -R 226 -R 241 -R 248 -R 252 -R 257 -R 275 -R 295 -R 298 -R 299 -R 321 -R 322 -R 328 -R 343 -R 352 -R 354 -R 355 -R 362 -R 365 -R 378 -R 380 -R 381
+
+    # --- Optional TPMS Filter Tuning ---
+    # The driver uses these built-in defaults automatically. 
+    # Uncomment and adjust these values only if you need to change the filter tolerances:
+    # max_age = 3600       # Seconds before a stale sensor is dropped
+    # quarantine = 7200    # Seconds to ignore a sensor showing impossible rate spikes
+    # max_rate = 0.11      # Maximum plausible temperature change (degrees per minute)
+    # dwell_sec = 600      # Wait time before a new sensor is trusted
+    # min_temp = 0.0       # Minimum valid physical temperature bound
+    # max_temp = 46.0      # Maximum valid physical temperature bound
+
     [[sensor_map]]
         outTemp = temperature.sane.UniversalTPMSPacket
 
@@ -58,17 +69,7 @@ Add the `[SDR]` block. *Note: Adjust frequency flags (`-f`) for your region.*
 > 
 > 
 
-**B. Set Local Climate Bounds**
-Add a standalone block to filter physical temperature limits. Values must be in Celsius.
-
-```ini
-[TPMSTempService]
-    min_temp = 0.0     # Adjust for your winter extremes
-    max_temp = 46.0    # Adjust for your summer extremes
-
-```
-
-**C. Add the Nostr Publisher & Map Registration (Optional)**
+**B. Add the Nostr Publisher & Map Registration (Optional)**
 
 *(Skip this step if you do not wish to broadcast to Nostr. The Python script will safely ignore the missing dependencies.)*
 
@@ -93,15 +94,16 @@ Under `[StdRESTful]`, add the `[[Nostr]]` block. On its first startup, if `priva
 
 ```
 
-**D. Enable Services in the Engine**
+**C. Enable the Nostr Publisher in the Engine (Optional)**
+
+*(Skip this step if you do not wish to broadcast to Nostr.)*
+
 In the `[Engine]` -> `[[Services]]` section:
 
-1. Append `user.tpmstemp.TPMSTempService` to your `data_services` line.
-2. Append `user.nostr_publisher.Nostr` to your `process_services` line (omit this if you are not using Nostr).
+Append `user.nostr_publisher.Nostr` to your `process_services` line.
 
 
 ```ini
-data_services = ..., user.tpmstemp.TPMSTempService
 process_services = ..., user.nostr_publisher.Nostr
 
 ```
@@ -182,3 +184,18 @@ As of September 2026, all major TPMS models supported by `rtl_433` are mapped un
 * **Standards Compliance:**
     * **Kind 16158:** Automatically manages map registration on startup using explicit tags (`name`, `description`, `geohash`, `connectivity`, `sensor`, `sensor_status`) with an empty content payload.
     * **Kind 4223:** Transmits periodic temperature telemetry payloads utilizing standard `["temp", value, "Multi-TPMS"]` tags.
+
+### Ambient Baseline & Median Filtering Logic
+
+To infer stable outdoor ambient temperatures from parked vehicle TPMS sensors while avoiding engine heat, direct sunlight, and erratic pressure/temperature fluctuations, the driver implements a multi-layer filtering and aggregation state machine:
+
+1. **Ingestion & Rate-of-Change Validation:** Every incoming sensor reading checks the elapsed time since its last transmission. If the rate of temperature change per minute exceeds `max_rate` (e.g., a sudden crash or spike caused by a tire splashing through a puddle), the sensor is isolated and subjected to a penalty quarantine for the duration specified by `quarantine`.
+2. **The Filter Pool:** Before a sensor's temperature is considered for the ambient baseline, it must pass four strict criteria:
+   * **Max Age:** Sensors that haven't transmitted within `max_age` seconds are purged from memory entirely.
+   * **Quarantine Status:** Quarantined sensors are ignored.
+   * **Dwell Time:** New sensors must survive in the system longer than `dwell_sec` before their data is trusted, preventing fresh, uncalibrated tires from skewing the baseline.
+   * **Physical Bounds:** The temperature must fall strictly between `min_temp` and `max_temp` (default 0°C to 46°C).
+3. **Aggregation & Median Selection:** Once the pool of valid readings is compiled, the driver determines the final ambient temperature based on the sample size:
+   * **1 Valid Reading:** Returns that single value directly.
+   * **2 Valid Readings:** Computes the arithmetic mean of the two values.
+   * **3 or More Valid Readings:** Uses Python's `statistics.median()` to isolate the true statistical median, neutralizing outlier sensors affected by localized heat sources.
