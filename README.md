@@ -48,7 +48,7 @@ Add the `[SDR]` block. *Note: Adjust frequency flags (`-f`) for your region.*
 ```ini
 [SDR]
     driver = user.sdr
-    cmd = /usr/local/bin/rtl_433 -M utc -F json -f 315M -f 433.92M -H 15 -s 1024k -g 42.1
+        cmd = /usr/local/bin/rtl_433 -M utc -F json -f 315M -f 433.92M -H 15 -s 1024k -g 42.1 -R 0 -R 59 -R 60 -R 82 -R 88 -R 89 -R 90 -R 95 -R 110 -R 123 -R 140 -R 156 -R 168 -R 180 -R 186 -R 201 -R 203 -R 208 -R 212 -R 225 -R 226 -R 241 -R 248 -R 252 -R 257 -R 275 -R 295 -R 298 -R 299 -R 321 -R 322 -R 328 -R 343 -R 352 -R 354 -R 355 -R 362 -R 365 -R 378 -R 380 -R 381
     [[sensor_map]]
         outTemp = temperature.sane.UniversalTPMSPacket
 
@@ -169,7 +169,10 @@ python3 tools/fetch_event.py <EVENT_ID_HEX> --relay wss://nos.lol
 
 ## Adding New Vehicles
 
-As of September 2026, all major TPMS models supported by `rtl_433` are mapped under the `UniversalTPMSPacket` class. If `rtl_433` adds support for new vehicle protocols in the future, you can easily bridge them by adding the new base identifier string to the `supported_tpms_models = []` array at the bottom of that class in `sdr.py`.
+As of September 2026, all major TPMS models supported by `rtl_433` are mapped under the `UniversalTPMSPacket` class and included in the `weewx.conf` `[SDR]` block. If `rtl_433` adds support for new vehicle protocols in the future, you can easily bridge them in two steps:
+
+1. Add the new base identifier string to the `supported_tpms_models = []` array at the bottom of that class in `sdr.py`.
+2. Append the new protocol's ID number to the `cmd` string in your `weewx.conf` using the `-R <ID>` flag (e.g., `-R 000`).
 
 ---
 
