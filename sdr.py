@@ -737,9 +737,12 @@ class SDRDriver(weewx.drivers.AbstractDevice):
             dt_minutes = (now - state['ts']) / 60.0
             
             if dt_minutes > 1.0:
-                rate = (current_val - state['val']) / dt_minutes
-                # Enforce absolute rate of change (catches sudden drops and spikes)
-                if abs(rate) > self.max_rate:
+                delta = abs(current_val - state['val'])
+                rate = delta / dt_minutes
+                
+                # Integer Quantization Bypass:
+                # Do not penalize standard 1-degree steps from low-granularity sensors.
+                if rate > self.max_rate and delta >= 1.5:
                     state['quarantined_until'] = now + self.quarantine_sec
                     
             state['val'] = current_val

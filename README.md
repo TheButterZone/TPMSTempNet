@@ -189,7 +189,7 @@ As of September 2026, all major TPMS models supported by `rtl_433` are mapped un
 
 To infer stable outdoor ambient temperatures from parked vehicle TPMS sensors while avoiding engine heat, direct sunlight, and erratic pressure/temperature fluctuations, the driver implements a multi-layer filtering and aggregation state machine:
 
-1. **Ingestion & Rate-of-Change Validation:** Every incoming sensor reading checks the elapsed time since its last transmission. If the rate of temperature change per minute exceeds `max_rate` (e.g., a sudden crash or spike caused by a tire splashing through a puddle), the sensor is isolated and subjected to a penalty quarantine for the duration specified by `quarantine`.
+1. **Ingestion & Rate-of-Change Validation:** Every incoming sensor reading checks the elapsed time since its last transmission. The driver enforces a strict `max_rate` limit to catch artificial temperature spikes (like brake heat or sudden sunlight). However, it includes an **integer quantization bypass** that safely forgives standard 1°C steps to maintain compatibility with low-resolution TPMS models that only broadcast whole numbers. If a multi-degree jump violates the rate limit, the sensor is isolated and subjected to a penalty quarantine for the duration specified by `quarantine`.
 2. **The Filter Pool:** Before a sensor's temperature is considered for the ambient baseline, it must pass four strict criteria:
    * **Max Age:** Sensors that haven't transmitted within `max_age` seconds are purged from memory entirely.
    * **Quarantine Status:** Quarantined sensors are ignored.
