@@ -199,3 +199,10 @@ To infer stable outdoor ambient temperatures from parked vehicle TPMS sensors wh
    * **1 Valid Reading:** Returns that single value directly.
    * **2 Valid Readings:** Computes the arithmetic mean of the two values.
    * **3 or More Valid Readings:** Uses Python's `statistics.median()` to isolate the true statistical median, neutralizing outlier sensors affected by localized heat sources.
+
+---
+
+### Acknowledgments & Upstream
+The SDR driver in this repository (`sdr.py`) is a heavily modified fork of the original [weewx-sdr](https://github.com/matthewwall/weewx-sdr) driver created by Matthew Wall. It has been customized to embed a native TPMS state machine and baseline median filter directly into the packet generation loop, and define a single universal TPMS packet class. 
+
+This project is distributed under the GNU General Public License v3.0 (GPL-3.0).

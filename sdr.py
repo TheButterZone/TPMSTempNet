@@ -1,5 +1,11 @@
 #!/usr/bin/env python
 # Copyright 2016-2024 Matthew Wall
+# 
+# Modified 2026 by TheButterZone for TPMSTempNet:
+# - Replaced all weather stations with universal TPMS packet class
+# - Embedded TPMS state machine directly into driver logic
+# - Added integer quantization bypass for baseline filtering
+# 
 # Distributed under the terms of the GNU Public License (GPLv3)
 """
 Collect data from stl-sdr.  Run rtl_433 on a thread and push the output onto
