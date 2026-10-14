@@ -81,9 +81,9 @@ class Nostr(StdService):
                 "wss://relay.snort.social",
                 "wss://bitcoiner.social",
                 "wss://relay.wellorder.net",
+                "wss://relay.nostrfy.org",
                 "wss://relay.ditto.pub",
-                "wss://relay.dreamith.to",
-                "wss://relay.damus.io"
+                "wss://relay.dreamith.to"
             ]
 
         # Derive station identity from core WeeWX config
