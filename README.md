@@ -6,23 +6,13 @@ TPMSTempNet leverages parked vehicle TPMS (Tire Pressure Monitoring System) sens
 
 * [rtl_433](https://github.com/merbanan/rtl_433) installed and accessible in your system path.
 * [WeeWX](https://github.com/weewx/weewx) (v4 or v5) installed and running.
-* **Python Cryptography & WebSocket Libraries (Optional):** Required only for Nostr event signing and relay communication (`nostr`, `websocket-client`). If you only want to use TPMSTempNet to sanitize temperature data for traditional networks like Weather Underground or CWOP, you can skip these dependencies entirely.
+* **Nostr publisher:** No additional third-party Python packages are required. `nostr_publisher.py` contains its own secp256k1/BIP-340 cryptography and WebSocket publishing implementation.
 
 ---
 
 ## Installation & Configuration
 
-
-### 1. Install Python Dependencies (Optional)
-
-If you intend to broadcast your data to Nostr, install the required publishing dependencies using `pip`. If you are only using WeeWX's built-in weather networks (like WU or CWOP), you can skip this step.
-
-```bash
-# Example for a WeeWX virtual environment or pip installation:
-pip install nostr websocket-client
-```
-
-### 2. Install the Custom Scripts
+### 1. Install the Custom Scripts
 
 Save the provided Python scripts into your WeeWX `user` directory:
 
@@ -31,7 +21,7 @@ Save the provided Python scripts into your WeeWX `user` directory:
 
 Place `sdr.py` and `nostr_publisher.py` inside this directory. Additionally, keep the `tools/` directory alongside your setup for standalone Nostr tools.
 
-### 3. Configure `weewx.conf`
+### 2. Configure `weewx.conf`
 
 Open your `weewx.conf` configuration file and make the following changes:
 
@@ -71,7 +61,7 @@ Add the `[SDR]` block. *Note: Adjust frequency flags (`-f`) for your region.*
 
 **B. Add the Nostr Publisher & Map Registration (Optional)**
 
-*(Skip this step if you do not wish to broadcast to Nostr. The Python script will safely ignore the missing dependencies.)*
+*(Skip this step if you do not wish to broadcast to Nostr.)*
 
 Under `[StdRESTful]`, add the `[[Nostr]]` block. On its first startup, if `private_key` is left blank, the publisher will automatically generate a secure Nostr keypair and print to the terminal.
 
@@ -87,7 +77,7 @@ Under `[StdRESTful]`, add the `[[Nostr]]` block. On its first startup, if `priva
         geohash_precision = 7
         
         # Hexadecimal Private Key (auto-generated on first run if left blank)
-        private_key = ""
+        private_key = ''
         
         # Target Relays (leave blank to use built-in default relay network)
         relays = 
@@ -108,7 +98,7 @@ process_services = ..., user.nostr_publisher.Nostr
 
 ```
 
-### 4. Restart WeeWX
+### 3. Restart WeeWX
 
 Restart the WeeWX daemon to apply changes. If Nostr is enabled, this will also broadcast your station profile (Kind 16158) to map frontends like `relaying.earth`:
 
