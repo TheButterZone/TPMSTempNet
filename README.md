@@ -170,8 +170,6 @@ python3 tools/direct_delete_nostr.py
 
 The script will prompt you for your private key hex and the target Event IDs you wish to purge, then broadcast the deletion request across your configured relays.
 
-> **⚠️ Relay Limitation Note:** Due to specific caching or configuration behavior on `wss://relay.relaying.earth`, deletion requests are currently unable to remove stations or events from that specific relay. Deletions will propagate and succeed normally on all other supported standard relays (such as `nos.lol`, `primal.net`, etc.).
-
 ---
 
 ## Adding New Vehicles
