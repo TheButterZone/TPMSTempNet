@@ -229,6 +229,10 @@ class _WebSocketConnection:
         if self._is_tls:
             options = sslopt or {}
             context = ssl.create_default_context()
+            if hasattr(context, "minimum_version") and hasattr(ssl, "TLSVersion"):
+                context.minimum_version = ssl.TLSVersion.TLSv1_2
+            else:
+                context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
             if options.get("cert_reqs") == ssl.CERT_NONE:
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
