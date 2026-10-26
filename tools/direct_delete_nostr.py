@@ -98,6 +98,7 @@ def send_deletion(sk_hex, event_ids, relays):
 
             sock = socket.create_connection((host, port), timeout=4)
             ctx = ssl.create_default_context()
+            ctx.minimum_version = ssl.TLSVersion.TLSv1_2
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
             sock = ctx.wrap_socket(sock, server_hostname=host)
