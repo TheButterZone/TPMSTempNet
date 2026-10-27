@@ -3,8 +3,8 @@
 # 
 # Modified 2026 by TheButterZone for TPMSTempNet:
 # - Replaced all weather stations with universal TPMS packet class
-# - Embedded TPMS state machine directly into driver logic
-# - Added integer quantization bypass for baseline filtering
+# - Embedded TPMS state machine with median-centered cluster consensus filtering
+# - Added integer quantization bypass and dual-extremity outlier rejection
 # 
 # Distributed under the terms of the GNU Public License (GPLv3)
 """
@@ -737,7 +737,7 @@ class SDRDriver(weewx.drivers.AbstractDevice):
             raise weewx.WeeWxIOError("rtl_433 process is not running")
 
     def _compute_ambient_baseline(self, current_val, now, tpms_id):
-        # 1. Ingest
+        # 1. Ingest & Track Rate of Change
         if tpms_id in self.sensors:
             state = self.sensors[tpms_id]
             dt_minutes = (now - state['ts']) / 60.0
@@ -746,7 +746,7 @@ class SDRDriver(weewx.drivers.AbstractDevice):
                 delta = abs(current_val - state['val'])
                 rate = delta / dt_minutes
                 
-                # Integer Quantization Bypass:
+                # Integer Quantization Bypass
                 # Do not penalize standard 1-degree steps from low-granularity sensors.
                 if rate > self.max_rate and delta >= 1.5:
                     state['quarantined_until'] = now + self.quarantine_sec
@@ -761,7 +761,7 @@ class SDRDriver(weewx.drivers.AbstractDevice):
                 'quarantined_until': 0
             }
 
-        # 2. Filter pool
+        # 2. Filter pool for valid candidate readings
         valid_readings = []
         for sensor_key, state in list(self.sensors.items()):
             # Purge stale data
@@ -777,25 +777,46 @@ class SDRDriver(weewx.drivers.AbstractDevice):
             if (now - state['first_seen']) < self.dwell_sec:
                 continue
                 
-            # Skip if outside sane climate bounds
+            # Skip if outside sane climate bounds (governed strictly by config max_temp/min_temp)
             if not (self.min_valid_temp <= state['val'] <= self.max_valid_temp):
                 continue
                 
             valid_readings.append(state['val'])
 
-        # 3. Publish Median
-        n = len(valid_readings)
-        ambient = None
+        if not valid_readings:
+            return None
+
+        # 3. Median-Centered Cluster Consensus & Small-Pool Divergence Check
+        valid_readings.sort()
         
+        # Safeguard for small pools (n = 2): 
+        # If we only have two sensors and they diverge by > 4.0°C, the higher 
+        # one is a cooling tire / warm outlier. Favor the lower (true ambient) reading.
+        if len(valid_readings) == 2 and (valid_readings[1] - valid_readings[0] > 4.0):
+            logdbg("SDRDriver TPMS Filter: Small pool divergence (%.1f°C vs %.1f°C). Rejecting warm outlier." % (valid_readings[0], valid_readings[1]))
+            valid_readings = [valid_readings[0]]
+
+        # Find the median of all valid candidates as our gravitational center
+        med = statistics.median(valid_readings)
+        
+        # Keep only readings clustering closely around the median (±5.0°C)
+        cluster_window = 5.0
+        filtered_cluster = [v for v in valid_readings if abs(v - med) <= cluster_window]
+
+        if not filtered_cluster:
+            return None
+
+        # Compute final ambient baseline from the tight consensus cluster
+        n = len(filtered_cluster)
         if n == 1:
-            ambient = valid_readings[0]
+            ambient = filtered_cluster[0]
         elif n == 2:
-            ambient = sum(valid_readings) / 2.0
-        elif n >= 3:
-            ambient = statistics.median(valid_readings)
+            ambient = sum(filtered_cluster) / 2.0
+        else:
+            ambient = statistics.median(filtered_cluster)
 
         if ambient is not None:
-            logdbg("SDRDriver TPMS Filter: Computed ambient baseline -> %.1f°C" % ambient)
+            logdbg("SDRDriver TPMS Filter: Computed median-centered ambient baseline -> %.1f°C" % ambient)
             
         return ambient
 

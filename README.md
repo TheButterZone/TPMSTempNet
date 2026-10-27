@@ -6,7 +6,7 @@ TPMSTempNet leverages parked vehicle TPMS (Tire Pressure Monitoring System) sens
 
 * [rtl_433](https://github.com/merbanan/rtl_433) installed and accessible in your system path.
 * [WeeWX](https://github.com/weewx/weewx) (v4 or v5) installed and running.
-* **Nostr publisher:** No additional third-party Python packages are required. `nostr_publisher.py` contains its own secp256k1/BIP-340 cryptography and WebSocket publishing implementation.
+* **Nostr publisher:** No additional third-party Python packages are required. `nostr_publisher.py` contains its own pure-Python secp256k1/BIP-340 cryptography and secure, TLS v1.2+ enforced WebSocket publishing implementation.
 
 ---
 
@@ -30,7 +30,6 @@ Change your station type to SDR:
 
 ```ini
 station_type = SDR
-
 ```
 
 Add the `[SDR]` block. *Note: Adjust frequency flags (`-f`) for your region.*
@@ -52,12 +51,9 @@ Add the `[SDR]` block. *Note: Adjust frequency flags (`-f`) for your region.*
 
     [[sensor_map]]
         outTemp = temperature.sane.UniversalTPMSPacket
-
 ```
 
 > **Privacy Note:** This driver strips and anonymizes TPMS hardware IDs. No vehicle-identifying data is retained or transmitted; only sanitized temperature metrics are processed.
-> 
-> 
 
 **B. Add the Nostr Publisher & Map Registration (Optional)**
 
@@ -81,7 +77,6 @@ Under `[StdRESTful]`, add the `[[Nostr]]` block. On its first startup, if `priva
         
         # Target Relays (leave blank to use built-in default relay network)
         relays = 
-
 ```
 
 **C. Enable the Nostr Publisher in the Engine (Optional)**
@@ -92,10 +87,8 @@ In the `[Engine]` -> `[[Services]]` section:
 
 Append `user.nostr_publisher.Nostr` to your `process_services` line.
 
-
 ```ini
 process_services = ..., user.nostr_publisher.Nostr
-
 ```
 
 ### 3. Restart WeeWX
@@ -104,7 +97,6 @@ Restart the WeeWX daemon to apply changes. If Nostr is enabled, this will also b
 
 ```bash
 sudo systemctl restart weewx
-
 ```
 
 ---
@@ -117,7 +109,6 @@ To watch local tire traffic in real-time, simply run `weewxd` directly in your f
 
 ```text
 [TPMS INTERCEPT] Model: Ford | ID: bhZw4ts6 | Temp: 25.0°C
-
 ```
 
 > **Privacy Note:** This terminal output is volatile. It physically bypasses WeeWX's internal loggers and vanishes as soon as you close the session. Once WeeWX is deployed as a background daemon, this data becomes entirely invisible.
@@ -136,7 +127,6 @@ To manually broadcast your station profile, run the script and point it directly
 
 ```bash
 python3 tools/register_station.py /path/to/weewx.conf
-
 ```
 
 The script will securely parse your coordinates and private key, generate a compliant Kind 16158 profile event, and output the live acceptance status from each relay.
@@ -147,14 +137,12 @@ To verify that your station profile or telemetry events are successfully indexed
 
 ```bash
 python3 tools/fetch_event.py <EVENT_ID_HEX>
-
 ```
 
 You can optionally target a specific relay using the `--relay` flag:
 
 ```bash
 python3 tools/fetch_event.py <EVENT_ID_HEX> --relay wss://nos.lol
-
 ```
 
 ### Deleting Station Events with `direct_delete_nostr.py`
@@ -165,7 +153,6 @@ To run the deletion tool interactively:
 
 ```bash
 python3 tools/direct_delete_nostr.py
-
 ```
 
 The script will prompt you for your private key hex and the target Event IDs you wish to purge, then broadcast the deletion request across your configured relays.
@@ -174,7 +161,7 @@ The script will prompt you for your private key hex and the target Event IDs you
 
 ## Adding New Vehicles
 
-As of September 2026, all major TPMS models supported by `rtl_433` are mapped under the `UniversalTPMSPacket` class and included in the `weewx.conf` `[SDR]` block. If `rtl_433` adds support for new vehicle protocols in the future, you can easily bridge them in two steps:
+As of October 2026, all major TPMS models supported by `rtl_433` are mapped under the `UniversalTPMSPacket` class and included in the `weewx.conf` `[SDR]` block. If `rtl_433` adds support for new vehicle protocols in the future, you can easily bridge them in two steps:
 
 1. Add the new base identifier string to the `supported_tpms_models = []` array at the bottom of that class in `sdr.py`.
 2. Append the new protocol's ID number to the `cmd` string in your `weewx.conf` using the `-R <ID>` flag (e.g., `-R 000`).
@@ -188,9 +175,9 @@ As of September 2026, all major TPMS models supported by `rtl_433` are mapped un
     * **Kind 16158:** Automatically manages map registration on startup using explicit tags (`name`, `description`, `geohash`, `connectivity`, `sensor`, `sensor_status`) with an empty content payload.
     * **Kind 4223:** Transmits periodic temperature telemetry payloads utilizing standard `["temp", value, "Multi-TPMS"]` tags.
 
-### Ambient Baseline & Median Filtering Logic
+### Ambient Baseline & Median-Centered Clustering Logic
 
-To infer stable outdoor ambient temperatures from parked vehicle TPMS sensors while avoiding engine heat, direct sunlight, and erratic pressure/temperature fluctuations, the driver implements a multi-layer filtering and aggregation state machine:
+To infer stable outdoor ambient temperatures from parked vehicle TPMS sensors while avoiding engine heat, direct sunlight, and erratic microclimate variations (such as insulated garages or indoor storage), the driver implements a multi-layer filtering and aggregation state machine:
 
 1. **Ingestion & Rate-of-Change Validation:** Every incoming sensor reading checks the elapsed time since its last transmission. The driver enforces a strict `max_rate` limit to catch artificial temperature spikes (like brake heat or sudden sunlight). However, it includes an **integer quantization bypass** that safely forgives standard 1°C steps to maintain compatibility with low-resolution TPMS models that only broadcast whole numbers. If a multi-degree jump violates the rate limit, the sensor is isolated and subjected to a penalty quarantine for the duration specified by `quarantine`.
 2. **The Filter Pool:** Before a sensor's temperature is considered for the ambient baseline, it must pass four strict criteria:
@@ -198,14 +185,11 @@ To infer stable outdoor ambient temperatures from parked vehicle TPMS sensors wh
    * **Quarantine Status:** Quarantined sensors are ignored.
    * **Dwell Time:** New sensors must survive in the system longer than `dwell_sec` before their data is trusted, preventing fresh, uncalibrated tires from skewing the baseline.
    * **Physical Bounds:** The temperature must fall strictly between `min_temp` and `max_temp` (default 0°C to 46°C).
-3. **Aggregation & Median Selection:** Once the pool of valid readings is compiled, the driver determines the final ambient temperature based on the sample size:
-   * **1 Valid Reading:** Returns that single value directly.
-   * **2 Valid Readings:** Computes the arithmetic mean of the two values.
-   * **3 or More Valid Readings:** Uses Python's `statistics.median()` to isolate the true statistical median, neutralizing outlier sensors affected by localized heat sources.
+3. **Median-Centered Cluster Consensus & Small-Pool Divergence Check:** Once the pool of valid readings is compiled, the driver checks for small-pool states: if exactly two sensors are active and they diverge by more than 4.0°C, the higher reading is treated as a slow-cooling tire outlier and dropped in favor of the true ambient baseline. Otherwise, it establishes a gravitational center using the statistical median of all valid candidates with a tight cluster window (±5.0°C) to reject dual-extremity anomalies (high friction-heated driving tires and low insulated garage/indoor microclimate sensors). The final ambient baseline is then computed from the remaining consensus cluster.
 
 ---
 
 ### Acknowledgments & Upstream
-The SDR driver in this repository (`sdr.py`) is a heavily modified fork of the original [weewx-sdr](https://github.com/matthewwall/weewx-sdr) driver created by Matthew Wall. It has been customized to embed a native TPMS state machine and baseline median filter directly into the packet generation loop, and define a single universal TPMS packet class. 
+The SDR driver in this repository (`sdr.py`) is a heavily modified fork of the original [weewx-sdr](https://github.com/matthewwall/weewx-sdr) driver created by Matthew Wall. It has been customized to embed a native TPMS state machine and median-centered cluster consensus filter directly into the packet generation loop, and define a single universal TPMS packet class. 
 
 This project is distributed under the GNU General Public License v3.0 (GPL-3.0).
