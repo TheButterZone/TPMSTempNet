@@ -737,28 +737,41 @@ class SDRDriver(weewx.drivers.AbstractDevice):
             raise weewx.WeeWxIOError("rtl_433 process is not running")
 
     def _compute_ambient_baseline(self, current_val, now, tpms_id):
-        # 1. Ingest & Track Rate of Change
+        # 1. Ingest, Debounce Rapid Bursts, & Track Rate of Change
+        min_burst_interval = 60  # Minimum 60 seconds between identical burst frames from the same ID
+        
         if tpms_id in self.sensors:
             state = self.sensors[tpms_id]
-            dt_minutes = (now - state['ts']) / 60.0
             
+            # Burst Check: If value is identical and under 60s, skip duplicate frame
+            if current_val == state.get('last_accepted_val') and (now - state.get('last_accepted_ts', 0)) < min_burst_interval:
+                logdbg("SDRDriver TPMS Filter: Debouncing rapid burst duplicate frame from sensor %s." % tpms_id)
+                return state['val']
+                
+            dt_minutes = (now - state['ts']) / 60.0
             if dt_minutes > 1.0:
                 delta = abs(current_val - state['val'])
                 rate = delta / dt_minutes
                 
-                # Integer Quantization Bypass
-                # Do not penalize standard 1-degree steps from low-granularity sensors.
-                if rate > self.max_rate and delta >= 1.5:
+                # Rate-of-Change & Hopping Gap Tolerance:
+                # Forgiving 2°C gaps from frequency hopping (delta < 3.0),
+                # but aggressively quarantining real warming/driving spikes (delta >= 3.0).
+                if rate > self.max_rate and delta >= 3:
                     state['quarantined_until'] = now + self.quarantine_sec
+                    logdbg("SDRDriver TPMS Filter: Sensor %s rate spike detected (Δ%.1f°C). Quarantined." % (tpms_id, delta))
                     
             state['val'] = current_val
             state['ts'] = now
+            state['last_accepted_ts'] = now
+            state['last_accepted_val'] = current_val
         else:
             self.sensors[tpms_id] = {
                 'val': current_val, 
                 'ts': now, 
                 'first_seen': now, 
-                'quarantined_until': 0
+                'quarantined_until': 0,
+                'last_accepted_ts': now,
+                'last_accepted_val': current_val
             }
 
         # 2. Filter pool for valid candidate readings
