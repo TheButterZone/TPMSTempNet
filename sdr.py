@@ -777,7 +777,7 @@ class SDRDriver(weewx.drivers.AbstractDevice):
         dwell_str = f"| Dwell: {dwell_remaining}s remaining" if dwell_remaining > 0 else "| Dwell: Expired"
         # Force-flushed print: renders live in the foreground terminal window only.	
         # Bypasses the WeeWX logging system entirely, leaving zero persistent traces on disk.
-        print(f"[TPMS INTERCEPT] ID: {tpms_id} | Temp: {current_val}°C {dwell_str}", flush=True)
+        print(f"[TPMS INTERCEPT] Model: {model_name} | ID: {tpms_id} | Temp: {current_val}°C {dwell_str}", flush=True)
 
         # 2. Filter pool for valid candidate readings
         valid_readings = []
