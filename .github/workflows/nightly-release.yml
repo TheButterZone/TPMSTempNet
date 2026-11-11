@@ -1,0 +1,38 @@
+name: Update Nightly Pre-Release
+
+on:
+  push:
+    branches:
+      - main  # Change to 'master' if that's your default branch
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required to create/modify releases and tags
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date -u +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Remove existing nightly tag (to roll it forward)
+        uses: richardsimko/update-tag@v3
+        with:
+          tag_name: nightly
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create or Update Nightly Pre-Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: nightly
+          name: "Nightly Development Build (${{ steps.date.outputs.date }})"
+          prerelease: true
+          body: |
+            Automated pre-release built from the latest push to `main`.
+            - Commit: `${{ github.sha }}`
+            - Date: ${{ steps.date.outputs.date }}
