@@ -5,6 +5,7 @@
 # - Replaced all weather stations with universal TPMS packet class
 # - Embedded TPMS state machine with median-centered cluster consensus filtering
 # - Added integer quantization bypass and dual-extremity outlier rejection
+# - Configured foreground terminal stdout streaming of state machine operation
 # 
 # Distributed under the terms of the GNU Public License (GPLv3)
 """
@@ -471,10 +472,6 @@ class UniversalTPMSPacket(Packet):
         sensor_id = str(obj.get('id', 'unknown'))
         model_name = str(obj.get('model', 'Unknown TPMS'))
         
-        # Force-flushed print: renders live in the foreground terminal window only.
-        # Bypasses the WeeWX logging system entirely, leaving zero persistent traces on disk.
-        print(f"[TPMS INTERCEPT] Model: {model_name} | ID: {sensor_id} | Temp: {temp_c}°C", flush=True)
-        
         # Pass the hardware ID so TPMSTempService can isolate physical sensors
         pkt['tpms_id'] = sensor_id
         
@@ -716,12 +713,7 @@ class SDRDriver(weewx.drivers.AbstractDevice):
                     # DUPLICATE SUPPRESSION
                     # ---------------------------------------------------------
                     if self._packets_match(pkt, self._last_pkt):
-                        if self._log_dups:
-                            logdbg("ignoring duplicate packet %s" % pkt)
                         continue
-
-                    if self._log_packets:
-                        logdbg("packet=%s" % pkt)
 
                     self._last_pkt = pkt
                     self._calculate_deltas(pkt)
@@ -730,22 +722,28 @@ class SDRDriver(weewx.drivers.AbstractDevice):
 
             # report any errors
             for line in self._mgr.get_stderr():
-                logerr(line)
+                line = line.strip()
+                if line:
+                    print(f"[SDR HEALTH ERROR] {line}", flush=True)
         else:
             for line in self._mgr.get_stderr():
-                logerr(line)
+                line = line.strip()
+                if line:
+                    print(f"[SDR HEALTH CRITICAL] {line}", flush=True)
+            print("[SDR HEALTH CRITICAL] rtl_433 process exited. Waiting 60 seconds for WeeWX auto-retry...", flush=True)
             raise weewx.WeeWxIOError("rtl_433 process is not running")
 
     def _compute_ambient_baseline(self, current_val, now, tpms_id):
         # 1. Ingest, Debounce Rapid Bursts, & Track Rate of Change
         min_burst_interval = 60  # Minimum 60 seconds between identical burst frames from the same ID
         
+        dwell_remaining = 0
         if tpms_id in self.sensors:
             state = self.sensors[tpms_id]
             
             # Burst Check: If value is identical and under 60s, skip duplicate frame
             if current_val == state.get('last_accepted_val') and (now - state.get('last_accepted_ts', 0)) < min_burst_interval:
-                logdbg("SDRDriver TPMS Filter: Debouncing rapid burst duplicate frame from sensor %s." % tpms_id)
+                print(f"[TPMS FILTER] Debouncing rapid burst duplicate frame from sensor {tpms_id}.", flush=True)
                 return state['val']
                 
             dt_minutes = (now - state['ts']) / 60.0
@@ -758,12 +756,13 @@ class SDRDriver(weewx.drivers.AbstractDevice):
                 # but aggressively quarantining real warming/driving spikes (delta >= 3.0).
                 if rate > self.max_rate and delta >= 3:
                     state['quarantined_until'] = now + self.quarantine_sec
-                    logdbg("SDRDriver TPMS Filter: Sensor %s rate spike detected (Δ%.1f°C). Quarantined." % (tpms_id, delta))
+                    print(f"[TPMS FILTER] Sensor {tpms_id} rate spike detected (Δ{delta:.1f}°C). Quarantined.", flush=True)
                     
             state['val'] = current_val
             state['ts'] = now
             state['last_accepted_ts'] = now
             state['last_accepted_val'] = current_val
+            dwell_remaining = int(max(0, self.dwell_sec - (now - state['first_seen'])))
         else:
             self.sensors[tpms_id] = {
                 'val': current_val, 
@@ -773,6 +772,12 @@ class SDRDriver(weewx.drivers.AbstractDevice):
                 'last_accepted_ts': now,
                 'last_accepted_val': current_val
             }
+            dwell_remaining = self.dwell_sec
+
+        dwell_str = f"| Dwell: {dwell_remaining}s remaining" if dwell_remaining > 0 else "| Dwell: Expired"
+        # Force-flushed print: renders live in the foreground terminal window only.	
+        # Bypasses the WeeWX logging system entirely, leaving zero persistent traces on disk.
+        print(f"[TPMS INTERCEPT] ID: {tpms_id} | Temp: {current_val}°C {dwell_str}", flush=True)
 
         # 2. Filter pool for valid candidate readings
         valid_readings = []
@@ -806,7 +811,7 @@ class SDRDriver(weewx.drivers.AbstractDevice):
         # If we only have two sensors and they diverge by > 4.0°C, the higher 
         # one is a cooling tire / warm outlier. Favor the lower (true ambient) reading.
         if len(valid_readings) == 2 and (valid_readings[1] - valid_readings[0] > 4.0):
-            logdbg("SDRDriver TPMS Filter: Small pool divergence (%.1f°C vs %.1f°C). Rejecting warm outlier." % (valid_readings[0], valid_readings[1]))
+            print(f"[TPMS FILTER] Small pool divergence ({valid_readings[0]:.1f}°C vs {valid_readings[1]:.1f}°C). Rejecting warm outlier.", flush=True)
             valid_readings = [valid_readings[0]]
 
         # Find the median of all valid candidates as our gravitational center
@@ -829,7 +834,7 @@ class SDRDriver(weewx.drivers.AbstractDevice):
             ambient = statistics.median(filtered_cluster)
 
         if ambient is not None:
-            logdbg("SDRDriver TPMS Filter: Computed median-centered ambient baseline -> %.1f°C" % ambient)
+            print(f"[TPMS FILTER] Computed median-centered ambient baseline -> {ambient:.1f}°C", flush=True)
             
         return ambient
 
