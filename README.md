@@ -37,7 +37,14 @@ Add the `[SDR]` block. *Note: Adjust frequency flags (`-f`) for your region.*
 ```ini
 [SDR]
     driver = user.sdr
-        cmd = /usr/local/bin/rtl_433 -M utc -F json -f 315M -f 433.92M -H 15 -s 1024k -g 42.1 -R 0 -R 59 -R 60 -R 82 -R 88 -R 89 -R 90 -R 95 -R 110 -R 123 -R 140 -R 156 -R 168 -R 180 -R 186 -R 201 -R 203 -R 208 -R 212 -R 225 -R 226 -R 241 -R 248 -R 252 -R 257 -R 275 -R 295 -R 298 -R 299 -R 321 -R 322 -R 328 -R 343 -R 352 -R 354 -R 355 -R 362 -R 365 -R 378 -R 380 -R 381
+
+    # --- Optional Override ---
+    # The driver uses a built-in optimized DEFAULT_CMD automatically.
+    # Uncomment and specify 'cmd' only if you need to override paths, devices, frequencies, hop intervals, sample rates, gains, or exclude specific vehicles:
+    # cmd = /usr/local/bin/rtl_433 -d driver=sdrplay -M utc -F json -f 315M -f 433.92M -H 15 -s 1024k -g 0 -R 0 ... -R -999 ...
+
+    [[sensor_map]]
+        outTemp = temperature.sane.UniversalTPMSPacket
 
     # --- Optional TPMS Filter Tuning ---
     # The driver uses these built-in defaults automatically. 
@@ -45,11 +52,8 @@ Add the `[SDR]` block. *Note: Adjust frequency flags (`-f`) for your region.*
     # max_age = 3600       # Seconds before a stale sensor is dropped
     # quarantine = 7200    # Seconds to ignore a sensor showing impossible rate spikes
     # dwell_sec = 600      # Wait time before a new sensor is trusted
-    # min_temp = 0.0       # Minimum valid physical temperature bound
-    # max_temp = 46.0      # Maximum valid physical temperature bound
-
-    [[sensor_map]]
-        outTemp = temperature.sane.UniversalTPMSPacket
+    # min_temp = 0.0       # Minimum valid physical temperature bound in Celsius
+    # max_temp = 46.0      # Maximum valid physical temperature bound in Celsius
 ```
 
 > **Privacy Note:** This driver strips and anonymizes TPMS hardware IDs. No vehicle-identifying data is retained or transmitted; only sanitized temperature metrics are processed.
@@ -163,17 +167,17 @@ The script will prompt you for your private key hex and the target Event IDs you
 As of early November 2026, all major TPMS models supported by `rtl_433` are mapped under the `UniversalTPMSPacket` class and included in the `weewx.conf` `[SDR]` block. If `rtl_433` adds support for new vehicle protocols in the future, you can easily bridge them in two steps:
 
 1. Add the new base identifier string to the `supported_tpms_models = []` array at the bottom of that class in `sdr.py`.
-2. Append the new protocol's ID number to the `cmd` string in your `weewx.conf` using the `-R <ID>` flag (e.g., `-R 000`).
+2. Append the new protocol's ID number to the `DEFAULT_CMD` string near the top of `sdr.py` (below the imports), using the `-R <ID>` flag (e.g., `-R 999`) or override it locally via the `cmd` option in your `weewx.conf`.
 
 ## Excluding Specific Vehicles (Garaged or Indoor Sensors)
 
 The built-in median-centered clustering and outlier filters handle most microclimate variations automatically, but vehicles parked inside insulated garages, carports, or subterranean structures can sometimes report temperatures that skew mildly inconsistent with open-air ambient readings. 
 
-If you notice a specific vehicle causing anomalies during your terminal intercept checks (when running `weewxd` in the foreground), you can temporarily exclude its sensor protocol without having to hunt down its manufacturer ID:
+If you notice a specific vehicle causing anomalies during your terminal intercept checks (when running `weewxd` in the foreground), you can temporarily exclude its sensor protocol:
 
-1. Locate the `cmd` line inside your `[SDR]` block in `weewx.conf`.
+1. Locate the `DEFAULT_CMD` definition near the top of `sdr.py` below the imports (or add a custom `cmd` override line inside your `[SDR]` block in `weewx.conf`).
 2. Find the protocol flag associated with that vehicle (refer to the [rtl_433 supported devices list](https://github.com/merbanan/rtl_433#running) for the numeric legend).
-3. Temporarily negate or remove its `-R <###>` entry from the `cmd` string. *Tip: It is often easier to prefix the ID with a minus sign or simply delete that specific `-R` token than to try and piece it back together later.*
+3. Temporarily negate (e.g.,`-R -999`) or remove its `-R 999` entry from the `cmd` string. *Tip: It should be easier to prefix the ID with a minus sign, rather than removing that specific `-R` entry and trying to piece it back together later.*
 
 > **Warning on Protocol Exclusions:** Protocol IDs in `rtl_433` (e.g., `-R 60`) apply globally to an entire manufacturer protocol family, not just your specific vehicle make or model. If you drop a protocol flag, you will stop receiving telemetry from *any* vehicle in range using that protocol. Only use this method if you are certain no other neighboring vehicles rely on that same protocol ID.
 
