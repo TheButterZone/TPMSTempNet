@@ -474,6 +474,7 @@ class UniversalTPMSPacket(Packet):
         
         # Pass the hardware ID so TPMSTempService can isolate physical sensors
         pkt['tpms_id'] = sensor_id
+        pkt['tpms_model'] = model_name
         
         # Hardcode the aliased identifier 'sane' and class name 'UniversalTPMSPacket'
         # to match `outTemp = temperature.sane.UniversalTPMSPacket` in weewx.conf
@@ -692,6 +693,7 @@ class SDRDriver(weewx.drivers.AbstractDevice):
                     # TPMS STATE MACHINE CHOKE POINT
                     # ---------------------------------------------------------
                     raw_tpms_id = packet.get('tpms_id.sane.UniversalTPMSPacket')
+                    raw_tpms_model = packet.get('tpms_model.sane.UniversalTPMSPacket', 'Unknown')
 
                     if raw_tpms_id is not None and 'outTemp' in pkt:
                         now = pkt.get('dateTime', time.time())
@@ -699,7 +701,8 @@ class SDRDriver(weewx.drivers.AbstractDevice):
                         ambient = self._compute_ambient_baseline(
                             pkt['outTemp'],
                             now,
-                            raw_tpms_id
+                            raw_tpms_id,
+                            model_name=raw_tpms_model
                         )
 
                         if ambient is None:
@@ -733,7 +736,7 @@ class SDRDriver(weewx.drivers.AbstractDevice):
             print("[SDR HEALTH CRITICAL] rtl_433 process exited. Waiting 60 seconds for WeeWX auto-retry...", flush=True)
             raise weewx.WeeWxIOError("rtl_433 process is not running")
 
-    def _compute_ambient_baseline(self, current_val, now, tpms_id):
+    def _compute_ambient_baseline(self, current_val, now, tpms_id, model_name='Unknown'):
         # 1. Ingest, Debounce Rapid Bursts, & Track Rate of Change
         min_burst_interval = 60  # Minimum 60 seconds between identical burst frames from the same ID
         
